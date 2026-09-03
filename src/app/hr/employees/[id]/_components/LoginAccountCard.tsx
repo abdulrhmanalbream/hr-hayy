@@ -15,10 +15,10 @@ import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
 import Alert from "@mui/material/Alert";
 import Stack from "@mui/material/Stack";
-import { createLoginForEmployee, setStaffActive, resetStaffPassword, updateStaffRole } from "@/server/actions/staff";
+import { createLoginForEmployee, setStaffActive, resetStaffPassword, updateStaffRole, updateStaffEmail } from "@/server/actions/staff";
 import { ROLE_AR } from "@/lib/format";
 
-type StaffUser = { id: string; username: string; role: string; isActive: boolean } | null;
+type StaffUser = { id: string; username: string; role: string; isActive: boolean; email?: string | null } | null;
 
 export default function LoginAccountCard({ employeeId, staffUser }: { employeeId: string; staffUser: StaffUser }) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -26,6 +26,8 @@ export default function LoginAccountCard({ employeeId, staffUser }: { employeeId
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("EMPLOYEE");
+  const [newEmail, setNewEmail] = useState("");
+  const [email, setEmail] = useState(staffUser?.email ?? "");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -33,10 +35,20 @@ export default function LoginAccountCard({ employeeId, staffUser }: { employeeId
   const create = async () => {
     setLoading(true);
     setError(null);
-    const res = await createLoginForEmployee({ employeeId, username, password, role });
+    const res = await createLoginForEmployee({ employeeId, username, password, role, email: newEmail });
     setLoading(false);
     if (!res.ok) return setError(res.error);
     setCreateOpen(false);
+    router.refresh();
+  };
+
+  const saveEmail = async () => {
+    if (!staffUser) return;
+    setLoading(true);
+    setError(null);
+    const res = await updateStaffEmail(staffUser.id, { email });
+    setLoading(false);
+    if (!res.ok) return setError(res.error);
     router.refresh();
   };
 
@@ -101,6 +113,18 @@ export default function LoginAccountCard({ employeeId, staffUser }: { employeeId
                 }}
               />
             </Box>
+            <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+              <TextField
+                label="البريد (لتسجيل الدخول عبر Google)"
+                size="small"
+                fullWidth
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Button variant="outlined" size="small" onClick={saveEmail} disabled={loading}>
+                حفظ
+              </Button>
+            </Box>
             <Button variant="text" size="small" onClick={() => setResetOpen(true)}>
               إعادة تعيين كلمة المرور
             </Button>
@@ -119,6 +143,12 @@ export default function LoginAccountCard({ employeeId, staffUser }: { employeeId
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField label="اسم المستخدم" fullWidth value={username} onChange={(e) => setUsername(e.target.value)} />
             <TextField label="كلمة المرور" type="password" fullWidth value={password} onChange={(e) => setPassword(e.target.value)} />
+            <TextField
+              label="البريد (اختياري — لتسجيل الدخول عبر Google)"
+              fullWidth
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+            />
             <TextField select label="الدور" fullWidth value={role} onChange={(e) => setRole(e.target.value)}>
               {Object.entries(ROLE_AR).map(([k, v]) => (
                 <MenuItem key={k} value={k}>

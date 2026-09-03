@@ -40,6 +40,30 @@ npm run dev          # http://localhost:3000 (أو المنفذ في NEXT_PUBLIC
   (نسبة تقريبية من الإعدادات، لا يوجد ربط حقيقي بمنصة التأمينات) − خصم غياب (أيام
   إجازة غير مدفوعة معتمدة خلال الشهر × الراتب اليومي).
 
+## النشر على Vercel
+
+1. **قاعدة البيانات**: Postgres مُستضاف (Neon أو غيره) — لا حاجة لأي إعداد إضافي،
+   المشروع نفسه (schema + queries) يعمل بلا تعديل. لدفع السكيمة على قاعدة بيانات
+   مستضافة (مرة أولى أو بعد أي تعديل على `schema.prisma`):
+   ```bash
+   DATABASE_URL="<connection string>" npx prisma db push
+   ```
+2. **متغيرات البيئة** في إعدادات مشروع Vercel (Settings → Environment Variables):
+   - `DATABASE_URL` — رابط الاتصال المُجمّع (pooled/`-pooler`) من Neon
+   - `AUTH_SECRET` — يُنشأ مرة واحدة، `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"`
+   - `NEXT_PUBLIC_APP_URL` — رابط النشر الفعلي (مثال: `https://hr-hayy.vercel.app`)
+   - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` — راجع قسم "تسجيل الدخول عبر Google" في `.env.example`
+     (أضف رابط Vercel ضمن Authorized JavaScript origins في Google Cloud Console)
+3. لا حاجة لأي إعداد Vercel إضافي (`vercel.json` إلخ) — Next.js قياسي، الاكتشاف تلقائي.
+   سكربت `build` يشغّل `prisma generate` تلقائياً قبل البناء.
+
+## تسجيل الدخول عبر Google
+
+اختياري — يعمل فقط بعد تعبئة `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (راجع التعليمات
+داخل `.env.example`). **لا يُنشئ حساباً جديداً** — فقط يدخل بحساب `StaffUser`
+موجود مسبقاً بنفس البريد الإلكتروني. اربط بريد أي موظف من صفحته في
+`/hr/employees/<id>` (بطاقة "حساب الدخول").
+
 ## خارج نطاق هذه النسخة (v1)
 
 تطبيق الجوال، الربط الحكومي (GOSI/مدد/قوى/مقيم)، ملف حماية الأجور (WPS)،

@@ -8,8 +8,10 @@ import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import Alert from "@mui/material/Alert";
+import Divider from "@mui/material/Divider";
 import Logo from "@/components/Logo";
 import { roleHome } from "@/lib/auth/session";
+import GoogleSignInButton from "./GoogleSignInButton";
 
 export default function LoginCard() {
   const [username, setUsername] = useState("");
@@ -18,6 +20,15 @@ export default function LoginCard() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+  const goAfterLogin = (data: { areas?: string[] }) => {
+    const next = searchParams.get("next");
+    const isSafeNext = !!next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\");
+    const target = isSafeNext ? next : roleHome(data.areas ?? []);
+    router.replace(target);
+    router.refresh();
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,11 +45,29 @@ export default function LoginCard() {
         setError(data.error ?? "تعذر تسجيل الدخول");
         return;
       }
-      const next = searchParams.get("next");
-      const isSafeNext = !!next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\");
-      const target = isSafeNext ? next : roleHome(data.areas ?? []);
-      router.replace(target);
-      router.refresh();
+      goAfterLogin(data);
+    } catch {
+      setError("تعذر الاتصال بالخادم");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitGoogle = async (credential: string) => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? "تعذر تسجيل الدخول عبر Google");
+        return;
+      }
+      goAfterLogin(data);
     } catch {
       setError("تعذر الاتصال بالخادم");
     } finally {
@@ -75,6 +104,19 @@ export default function LoginCard() {
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}
             </Alert>
+          )}
+
+          {googleClientId && (
+            <>
+              <Box sx={{ mb: 2.5, opacity: loading ? 0.6 : 1, pointerEvents: loading ? "none" : "auto" }}>
+                <GoogleSignInButton clientId={googleClientId} onCredential={submitGoogle} />
+              </Box>
+              <Divider sx={{ mb: 2.5 }}>
+                <Typography variant="caption" color="text.secondary">
+                  أو
+                </Typography>
+              </Divider>
+            </>
           )}
 
           <form onSubmit={submit}>
