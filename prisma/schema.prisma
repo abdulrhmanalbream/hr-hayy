@@ -1,0 +1,359 @@
+// Personnel Affairs (شؤون الموظفين) — Prisma schema
+// Hierarchy: Department -> Employee -> (Attendance | LeaveRequest | Payslip | Document)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Staff & access ──────────────────────────────
+
+enum StaffRole {
+  HR_ADMIN // مسؤول الموارد البشرية — تحكم كامل
+  MANAGER // مدير مباشر — يعتمد طلبات فريقه
+  EMPLOYEE // موظف — الخدمة الذاتية فقط
+}
+
+/// حساب الدخول. كل StaffUser يمثّل شخصاً واحداً، ويُربط اختيارياً بسجل Employee
+/// (قد يُنشأ سجل الموظف قبل تفعيل حساب الدخول له).
+model StaffUser {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  email        String?   @unique
+  name         String
+  phone        String?
+  passwordHash String
+  role         StaffRole @default(EMPLOYEE)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  employee             Employee?
+  approvedLeaves        LeaveRequest[]        @relation("LeaveApprover")
+  manualAttendanceEntries AttendanceRecord[]  @relation("AttendanceEnteredBy")
+  uploadedDocuments     Document[]            @relation("DocumentUploadedByStaff")
+  generatedPayrollRuns  PayrollRun[]          @relation("PayrollGeneratedBy")
+  approvedPayrollRuns   PayrollRun[]          @relation("PayrollApprovedBy")
+  notifications         Notification[]
+}
+
+// ─────────────────────────────── Org structure ───────────────────────────────
+
+model Department {
+  id              String      @id @default(cuid())
+  name            String
+  parentId        String?
+  parent          Department? @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children        Department[] @relation("DepartmentHierarchy")
+  headEmployeeId  String?
+  headEmployee    Employee?   @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  employees       Employee[]  @relation("DepartmentEmployees")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model JobTitle {
+  id        String     @id @default(cuid())
+  name      String
+  employees Employee[]
+  createdAt DateTime   @default(now())
+}
+
+// ─────────────────────────────── Employees ───────────────────────────────────
+
+enum EmploymentType {
+  FULL_TIME // دوام كامل
+  PART_TIME // دوام جزئي
+  CONTRACTOR // متعاقد
+}
+
+enum EmployeeStatus {
+  ACTIVE // نشط
+  ON_LEAVE // في إجازة
+  SUSPENDED // موقوف
+  TERMINATED // منتهي الخدمة
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+model Employee {
+  id               String         @id @default(cuid())
+  employeeNo       Int            @unique @default(autoincrement())
+  fullName         String
+  nationalId       String         @unique // رقم الهوية/الإقامة
+  nationality      String?
+  gender           Gender?
+  birthDate        DateTime?
+  phone            String
+  email            String?
+  photoUrl         String?
+
+  departmentId     String
+  department       Department     @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  jobTitleId       String
+  jobTitle         JobTitle       @relation(fields: [jobTitleId], references: [id])
+
+  managerId        String? // المدير المباشر — يعتمد طلبات هذا الموظف
+  manager          Employee?      @relation("EmployeeManager", fields: [managerId], references: [id])
+  reports          Employee[]     @relation("EmployeeManager")
+
+  hireDate         DateTime
+  employmentType   EmploymentType @default(FULL_TIME)
+  status           EmployeeStatus @default(ACTIVE)
+  terminationDate  DateTime?
+
+  iqamaExpiry      DateTime?
+  contractExpiry   DateTime?
+
+  bankName         String?
+  bankIban         String?
+  baseSalary       Decimal        @default(0) @db.Decimal(12, 2)
+  gosiExempt       Boolean        @default(false) // معفى من خصم التأمينات الاجتماعية عند توليد الرواتب
+
+  staffUserId      String?        @unique
+  staffUser        StaffUser?     @relation(fields: [staffUserId], references: [id])
+
+  departmentsHeaded    Department[]           @relation("DepartmentHead")
+  attendanceRecords    AttendanceRecord[]
+  leaveRequests        LeaveRequest[]
+  documents            Document[]
+  salaryComponents     EmployeeSalaryComponent[]
+  payslips             Payslip[]
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
+
+// ─────────────────────────────── Documents ───────────────────────────────────
+
+/// أنواع وثائق الموظف تديرها الموارد البشرية (إقامة، هوية، عقد...)
+model DocumentType {
+  id        String     @id @default(cuid())
+  key       String     @unique
+  labelAr   String
+  hasExpiry Boolean    @default(true)
+  required  Boolean    @default(false)
+  enabled   Boolean    @default(true)
+  sortOrder Int        @default(0)
+  documents Document[]
+}
+
+model Document {
+  id             String       @id @default(cuid())
+  typeId         String
+  type           DocumentType @relation(fields: [typeId], references: [id])
+  employeeId     String
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  fileKey        String // مسار محلي داخل .storage
+  fileName       String
+  contentType    String
+  size           Int          @default(0)
+  expiryDate     DateTime?
+  uploadedById   String? // حساب الموظف نفسه أو موظف HR
+  uploadedByStaff StaffUser?  @relation("DocumentUploadedByStaff", fields: [uploadedById], references: [id])
+  createdAt      DateTime     @default(now())
+}
+
+// ─────────────────────────────── Attendance ──────────────────────────────────
+
+enum AttendanceStatus {
+  PRESENT // حاضر
+  LATE // متأخر
+  ABSENT // غائب
+  ON_LEAVE // في إجازة
+  HOLIDAY // عطلة رسمية
+  WEEKEND // عطلة أسبوعية
+}
+
+enum AttendanceSource {
+  WEB // تسجيل ذاتي عبر الموقع
+  MANUAL // إدخال يدوي من الموارد البشرية
+}
+
+model AttendanceRecord {
+  id           String            @id @default(cuid())
+  employeeId   String
+  employee     Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date         DateTime          @db.Date
+  checkIn      DateTime?
+  checkOut     DateTime?
+  status       AttendanceStatus  @default(PRESENT)
+  source       AttendanceSource  @default(WEB)
+  note         String?
+  createdById  String? // لو أدخلته الموارد البشرية يدوياً
+  createdBy    StaffUser?        @relation("AttendanceEnteredBy", fields: [createdById], references: [id])
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([employeeId, date])
+}
+
+// ─────────────────────────────── Leave ────────────────────────────────────────
+
+enum LeaveKind {
+  FULL_DAY // إجازة بالأيام
+  HOURLY // مغادرة بالساعات
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELED
+}
+
+/// أنواع الإجازات تديرها الموارد البشرية — الرصيد يُحسب من الطلبات المعتمدة، لا يُخزّن.
+model LeaveType {
+  id                 String         @id @default(cuid())
+  key                String         @unique
+  nameAr             String
+  annualDays         Int? // سقف الأيام السنوي — فارغ لأنواع بلا سقف (مثل بدون راتب)
+  isPaid             Boolean        @default(true)
+  requiresAttachment Boolean        @default(false)
+  enabled            Boolean        @default(true)
+  sortOrder          Int            @default(0)
+  requests           LeaveRequest[]
+}
+
+model LeaveRequest {
+  id             String              @id @default(cuid())
+  employeeId     String
+  employee       Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId    String
+  leaveType      LeaveType           @relation(fields: [leaveTypeId], references: [id])
+  kind           LeaveKind           @default(FULL_DAY)
+  startDate      DateTime            @db.Date
+  endDate        DateTime            @db.Date
+  startTime      String? // "HH:mm" — للمغادرة الساعية فقط
+  endTime        String?
+  daysCount      Decimal             @db.Decimal(5, 2) // محسوبة عند الإرسال (أيام، أو كسر يوم للمغادرة)
+  reason         String
+  attachmentKey  String?
+  attachmentName String?
+  status         LeaveRequestStatus  @default(PENDING)
+  approverId     String?
+  approver       StaffUser?          @relation("LeaveApprover", fields: [approverId], references: [id])
+  approvedAt     DateTime?
+  rejectionNote  String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+}
+
+// ─────────────────────────────── Notifications (in-app) ──────────────────────
+
+model Notification {
+  id          String    @id @default(cuid())
+  staffUserId String
+  staffUser   StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  title       String
+  body        String
+  relatedType String? // leaveRequest | document | payrollRun
+  relatedId   String?
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  @@index([staffUserId, isRead, createdAt])
+}
+
+// ─────────────────────────────── Payroll ──────────────────────────────────────
+
+enum SalaryComponentType {
+  EARNING // مستحق
+  DEDUCTION // خصم
+}
+
+/// عناصر الراتب تديرها الموارد البشرية (أساسي، بدل سكن، بدل نقل، خصم قرض...)
+model SalaryComponent {
+  id          String              @id @default(cuid())
+  key         String              @unique
+  nameAr      String
+  type        SalaryComponentType
+  isRecurring Boolean             @default(true)
+  isSystem    Boolean             @default(false) // "أساسي" — لا يُحذف
+  enabled     Boolean             @default(true)
+  sortOrder   Int                 @default(0)
+  assignments EmployeeSalaryComponent[]
+}
+
+/// مبلغ ثابت متكرر شهرياً لعنصر راتب لموظف معيّن (بدل سكن 1000 مثلاً)
+model EmployeeSalaryComponent {
+  id          String          @id @default(cuid())
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  componentId String
+  component   SalaryComponent @relation(fields: [componentId], references: [id])
+  amount      Decimal         @db.Decimal(12, 2)
+  isActive    Boolean         @default(true)
+
+  @@unique([employeeId, componentId])
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  APPROVED
+  PAID
+}
+
+model PayrollRun {
+  id               String            @id @default(cuid())
+  periodYear       Int
+  periodMonth      Int // 1-12
+  status           PayrollRunStatus  @default(DRAFT)
+  generatedById    String
+  generatedBy      StaffUser         @relation("PayrollGeneratedBy", fields: [generatedById], references: [id])
+  generatedAt      DateTime          @default(now())
+  approvedById     String?
+  approvedBy       StaffUser?        @relation("PayrollApprovedBy", fields: [approvedById], references: [id])
+  approvedAt       DateTime?
+  paidAt           DateTime?
+  totalGross       Decimal           @default(0) @db.Decimal(14, 2)
+  totalDeductions  Decimal           @default(0) @db.Decimal(14, 2)
+  totalNet         Decimal           @default(0) @db.Decimal(14, 2)
+  payslips         Payslip[]
+
+  @@unique([periodYear, periodMonth])
+}
+
+/// لقطة ثابتة عند التوليد — تعديل عناصر الراتب لاحقاً لا يغيّر قسائم صدرت فعلاً.
+model Payslip {
+  id               String     @id @default(cuid())
+  payrollRunId     String
+  payrollRun       PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employeeId       String
+  employee         Employee   @relation(fields: [employeeId], references: [id])
+  basicSalary      Decimal    @db.Decimal(12, 2)
+  totalEarnings    Decimal    @db.Decimal(12, 2)
+  totalDeductions  Decimal    @db.Decimal(12, 2)
+  netSalary        Decimal    @db.Decimal(12, 2)
+  lineItems        String // JSON: [{key,nameAr,type,amount}]
+  workingDays      Int
+  absentDays       Decimal    @db.Decimal(5, 2) @default(0)
+  createdAt        DateTime   @default(now())
+
+  @@unique([payrollRunId, employeeId])
+}
+
+// ─────────────────────────────── Shared ───────────────────────────────────────
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityName String
+  entityId   String
+  action     String // "CREATE" | "UPDATE" | "DELETE"
+  oldData    String?
+  newData    String?
+  changedBy  String
+  createdAt  DateTime @default(now())
+}
