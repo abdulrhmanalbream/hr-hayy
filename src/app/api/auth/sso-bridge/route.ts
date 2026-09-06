@@ -1,23 +1,22 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { verifyGroupSession, HAYY_SSO_COOKIE } from "@/lib/auth/groupSession";
+import { verifyBridgeToken } from "@/lib/auth/groupSession";
 import { signSession, cookieOptions, STAFF_COOKIE, areasForRole } from "@/lib/auth/session";
 
 /**
- * Cross-app SSO bridge: middleware sends unauthenticated staff-area requests
- * here when a valid sso.hayy.sa bridge cookie is present but there's no
- * personnel session yet. Re-verifies that cookie server-side (Node runtime,
- * unlike middleware, so it can hit the DB), looks up a StaffUser by its
- * email — same rule as "Sign in with Google": the email must already
- * belong to an active staff account, this never creates one — and if
- * found, signs the normal session and sends the browser on to where it
- * was headed.
+ * Cross-app SSO bridge: middleware sends requests here that arrived with a
+ * `?sso_token=` from the SSO app's /api/auth/authorize. Verifies that
+ * short-lived token server-side (Node runtime, unlike middleware, so it can
+ * hit the DB), looks up a StaffUser by its email — same rule as "Sign in
+ * with Google": the email must already belong to an active staff account,
+ * this never creates one — and if found, signs the normal session and
+ * sends the browser on to where it was headed.
  */
 export async function GET(req: NextRequest) {
   const next = req.nextUrl.searchParams.get("next");
   const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
 
-  const identity = await verifyGroupSession(req.cookies.get(HAYY_SSO_COOKIE)?.value);
+  const identity = await verifyBridgeToken(req.nextUrl.searchParams.get("token"));
   if (!identity) {
     return NextResponse.redirect(new URL("/login", req.url));
   }

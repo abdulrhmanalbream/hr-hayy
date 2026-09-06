@@ -7,7 +7,6 @@ import {
   type StaffSession,
   type StaffArea,
 } from "@/lib/auth/session";
-import { verifyGroupSession, HAYY_SSO_COOKIE } from "@/lib/auth/groupSession";
 
 const AREA_KEYS: Record<string, StaffArea> = {
   "/hr": "hr",
@@ -24,12 +23,17 @@ export async function middleware(req: NextRequest) {
   if (area) {
     const session = await verifySession<StaffSession>(req.cookies.get(STAFF_COOKIE)?.value);
     if (!isValidStaffSession(session)) {
-      // Cross-app SSO: a valid sso.hayy.sa bridge cookie means the browser
-      // already authenticated there — try to silently establish a session
-      // for that identity before falling back to a manual login.
-      const groupIdentity = await verifyGroupSession(req.cookies.get(HAYY_SSO_COOKIE)?.value);
-      if (groupIdentity) {
+      // Cross-app SSO: arriving with ?sso_token= means the SSO dashboard's
+      // HR tile sent us through /api/auth/authorize, which already
+      // confirmed the user there. Hand the token to the bridge route (Node
+      // runtime, needed for the StaffUser lookup) instead of verifying it
+      // here — a *missing* token is the common case (direct/bookmarked
+      // visits keep working exactly as before), so don't do that check
+      // twice.
+      const ssoToken = req.nextUrl.searchParams.get("sso_token");
+      if (ssoToken) {
         const bridgeUrl = new URL("/api/auth/sso-bridge", req.url);
+        bridgeUrl.searchParams.set("token", ssoToken);
         bridgeUrl.searchParams.set("next", pathname);
         return NextResponse.redirect(bridgeUrl);
       }
