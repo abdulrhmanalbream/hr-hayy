@@ -17,26 +17,33 @@ const AREA_KEYS: Record<string, StaffArea> = {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // Cross-app SSO: arriving with ?sso_token= means the SSO dashboard's HR
+  // tile sent us through /api/auth/authorize, which already confirmed the
+  // user there. Checked here, before any per-path branch, because the
+  // dashboard tile links to the bare origin ("/") — the root page (an
+  // unconditional redirect() with no knowledge of query params) would
+  // otherwise swallow the token before the staff-area check below ever saw
+  // it. Hand the token to the bridge route (Node runtime, needed for the
+  // StaffUser lookup) instead of verifying it here — a *missing* token is
+  // the common case (direct/bookmarked visits keep working exactly as
+  // before), so don't do that check twice.
+  const ssoToken = req.nextUrl.searchParams.get("sso_token");
+  if (ssoToken) {
+    const existing = await verifySession<StaffSession>(req.cookies.get(STAFF_COOKIE)?.value);
+    if (!isValidStaffSession(existing)) {
+      const bridgeUrl = new URL("/api/auth/sso-bridge", req.url);
+      bridgeUrl.searchParams.set("token", ssoToken);
+      bridgeUrl.searchParams.set("next", pathname);
+      return NextResponse.redirect(bridgeUrl);
+    }
+  }
+
   const area = Object.keys(AREA_KEYS).find(
     (a) => pathname === a || pathname.startsWith(a + "/"),
   );
   if (area) {
     const session = await verifySession<StaffSession>(req.cookies.get(STAFF_COOKIE)?.value);
     if (!isValidStaffSession(session)) {
-      // Cross-app SSO: arriving with ?sso_token= means the SSO dashboard's
-      // HR tile sent us through /api/auth/authorize, which already
-      // confirmed the user there. Hand the token to the bridge route (Node
-      // runtime, needed for the StaffUser lookup) instead of verifying it
-      // here — a *missing* token is the common case (direct/bookmarked
-      // visits keep working exactly as before), so don't do that check
-      // twice.
-      const ssoToken = req.nextUrl.searchParams.get("sso_token");
-      if (ssoToken) {
-        const bridgeUrl = new URL("/api/auth/sso-bridge", req.url);
-        bridgeUrl.searchParams.set("token", ssoToken);
-        bridgeUrl.searchParams.set("next", pathname);
-        return NextResponse.redirect(bridgeUrl);
-      }
       const url = new URL("/login", req.url);
       url.searchParams.set("next", pathname);
       return NextResponse.redirect(url);
@@ -58,5 +65,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/hr/:path*", "/manager/:path*", "/me/:path*", "/login"],
+  matcher: ["/", "/hr/:path*", "/manager/:path*", "/me/:path*", "/login"],
 };
